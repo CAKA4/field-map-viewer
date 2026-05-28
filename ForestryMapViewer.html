@@ -189,6 +189,7 @@ html,body { height:100%; overflow:hidden; background:var(--dark); color:var(--te
   <button class="tb-btn" id="btn-track" onclick="toggleTrack()" title="Track log">⏺</button>
   <button class="tb-btn" id="btn-point" onclick="togglePointMode()" title="Capture point">📍</button>
   <button class="tb-btn" id="btn-pdf" onclick="togglePDF()" title="Toggle PDF overlay" style="display:none">🗺</button>
+  <button class="tb-btn" id="btn-import" onclick="document.getElementById('import-input').click()" title="Import GeoJSON">⬇</button>
   <button class="tb-btn" id="btn-export" onclick="toggleExport()" title="Export">⬆</button>
 </div>
 
@@ -229,6 +230,7 @@ html,body { height:100%; overflow:hidden; background:var(--dark); color:var(--te
   </div>
 </div>
 <input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none" multiple>
+<input type="file" id="import-input" accept=".geojson,.json" style="display:none" multiple>
 
 <!-- Export panel -->
 <div id="export-panel">
@@ -405,17 +407,20 @@ function toggleMic() {
   recognition.interimResults = true;
   recognition.lang = 'en-CA';
 
-  const existing = document.getElementById('note-input').value;
-  let interim = '';
+  // Snapshot text at the moment mic starts (not at modal open) — fixes restart bug
+  const baseText = document.getElementById('note-input').value;
+  let finalAccum = '';
 
   recognition.onresult = (e) => {
-    interim = '';
-    let final = '';
+    let newFinal = '';
+    let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+      if (e.results[i].isFinal) newFinal += e.results[i][0].transcript;
       else interim += e.results[i][0].transcript;
     }
-    document.getElementById('note-input').value = existing + (existing ? ' ' : '') + final + interim;
+    finalAccum += newFinal;
+    const prefix = baseText ? baseText + ' ' : '';
+    document.getElementById('note-input').value = prefix + finalAccum + interim;
   };
 
   recognition.onerror = () => {
@@ -627,6 +632,78 @@ async function loadPdfJs() {
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 }
+
+// ── IMPORT GEOJSON ────────────────────────────────────────────────────────────
+document.getElementById('import-input').addEventListener('change', async function(e) {
+  const files = Array.from(e.target.files);
+  e.target.value = '';
+  let totalPts = 0, totalTracks = 0;
+
+  for (const file of files) {
+    try {
+      const text = await file.text();
+      const geojson = JSON.parse(text);
+      if (geojson.type !== 'FeatureCollection') { showToast(`${file.name}: not a FeatureCollection`, 3000); continue; }
+
+      const bounds = [];
+
+      for (const feature of geojson.features) {
+        const geom = feature.geometry;
+        const props = feature.properties || {};
+
+        if (geom.type === 'Point') {
+          const [lon, lat] = geom.coordinates;
+          const note = props.note || '';
+          const photos = props.photos || [];
+          const time = props.time || '';
+
+          // Add to capturedPoints so it can be re-exported
+          capturedPoints.push({ lat, lon, note, time, photos });
+
+          const hasPhoto = photos.length > 0;
+          const isImported = true;
+          const icon = L.divIcon({
+            className:'',
+            html:`<div style="width:${hasPhoto?18:14}px;height:${hasPhoto?18:14}px;border-radius:50%;
+              background:${hasPhoto?'#4fc3f7':'#a5d6a7'};border:2px solid #fff;
+              box-shadow:0 0 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;
+              font-size:9px;">${hasPhoto?'📷':''}</div>`,
+            iconSize:[hasPhoto?18:14,hasPhoto?18:14], iconAnchor:[hasPhoto?9:7,hasPhoto?9:7]
+          });
+          const m = L.marker([lat, lon], {icon}).addTo(map);
+
+          let popupHtml = `<div style="font-family:monospace;font-size:11px;max-width:200px;">`;
+          if (note) popupHtml += `<p>${note}</p>`;
+          if (time) popupHtml += `<p style="color:#888;font-size:9px;">${time.slice(0,16).replace('T',' ')}</p>`;
+          if (photos.length) popupHtml += photos.map(d =>
+            `<img src="${d}" style="width:100%;border-radius:4px;margin-top:4px;">`).join('');
+          popupHtml += `</div>`;
+          m.bindPopup(popupHtml);
+          pointMarkers.push(m);
+
+          bounds.push([lat, lon]);
+          totalPts++;
+
+        } else if (geom.type === 'LineString') {
+          const coords = geom.coordinates.map(c => [c[1], c[0]]);
+          const line = L.polyline(coords, {color:'#ce93d8', weight:3, opacity:.85, dashArray:'6,4'}).addTo(map);
+          line.bindPopup(`<span style="font-family:monospace;font-size:11px;">Imported track<br>${coords.length} pts</span>`);
+          coords.forEach(c => bounds.push(c));
+          totalTracks++;
+        }
+      }
+
+      if (bounds.length) map.flyToBounds(L.latLngBounds(bounds), {padding:[40,40], duration:1});
+
+    } catch(err) {
+      showToast(`${file.name}: parse error`, 3000);
+    }
+  }
+
+  document.getElementById('s-pts').textContent = capturedPoints.length;
+  const msg = [totalPts && `${totalPts} point${totalPts>1?'s':''}`, totalTracks && `${totalTracks} track${totalTracks>1?'s':''}`].filter(Boolean).join(' + ');
+  showToast(msg ? `Imported: ${msg}` : 'Nothing imported', 3000);
+});
 
 // ── EXPORT ────────────────────────────────────────────────────────────────────
 function toggleExport() {
