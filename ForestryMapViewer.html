@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Field Map Viewer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+:root {
+  --green:#2d5a27; --green-light:#3d7a35; --gold:#c8952a; --gold-light:#e8b84b;
+  --dark:#1a2e18; --panel:#0f1e0d; --text:#e8f0e6; --dim:#7a9a76;
+  --accent:#4caf50; --red:#ef5350; --orange:#ff9800;
+}
+html,body { height:100%; overflow:hidden; background:var(--dark); color:var(--text); font-family:'Courier New',monospace; }
+
+/* MAP */
+#map { position:absolute; inset:0; bottom:52px; top:48px; }
+
+/* HEADER */
+#header {
+  position:absolute; top:0; left:0; right:0; height:48px;
+  background:var(--panel); border-bottom:1px solid var(--green-light);
+  display:flex; align-items:center; padding:0 8px; gap:6px; z-index:1000;
+}
+#header-title { color:var(--gold-light); font-size:11px; letter-spacing:.1em; text-transform:uppercase; font-weight:bold; flex:1; }
+#map-label { color:var(--dim); font-size:9px; display:block; margin-top:1px; }
+
+/* FOOTER STATUS */
+#footer {
+  position:absolute; bottom:0; left:0; right:0; height:52px;
+  background:var(--panel); border-top:1px solid var(--green-light);
+  display:flex; align-items:center; padding:0 8px; gap:4px; z-index:1000;
+}
+.stat { display:flex; flex-direction:column; align-items:center; flex:1; min-width:0; }
+.stat-label { font-size:7px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+.stat-val { font-size:11px; font-weight:bold; margin-top:1px; white-space:nowrap; }
+.stat-val.on { color:var(--accent); }
+.stat-val.warn { color:var(--orange); }
+.stat-val.err { color:var(--red); }
+.vdiv { width:1px; height:30px; background:var(--green-light); flex-shrink:0; }
+
+/* TOOLBAR */
+#toolbar {
+  position:absolute; top:56px; right:8px;
+  display:flex; flex-direction:column; gap:6px; z-index:900;
+}
+.tb-btn {
+  width:42px; height:42px; border-radius:6px;
+  background:var(--panel); border:1px solid var(--green-light);
+  color:var(--dim); font-size:18px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 2px 8px rgba(0,0,0,.5);
+}
+.tb-btn.active { border-color:var(--accent); color:var(--accent); background:rgba(76,175,80,.12); }
+.tb-btn.active-red { border-color:var(--red); color:var(--red); background:rgba(239,83,80,.12); }
+.tb-btn.active-gold { border-color:var(--gold); color:var(--gold-light); background:rgba(200,149,42,.12); }
+
+/* LOAD PDF BTN */
+#load-pdf-btn {
+  position:absolute; top:56px; left:8px;
+  background:var(--panel); border:1px solid var(--green-light);
+  color:var(--dim); font-size:9px; letter-spacing:.08em; text-transform:uppercase;
+  padding:6px 10px; border-radius:4px; cursor:pointer; z-index:900;
+  box-shadow:0 2px 8px rgba(0,0,0,.5);
+}
+#load-pdf-btn.has-map { border-color:var(--gold); color:var(--gold-light); }
+
+/* FLY BUTTONS */
+#fly-btns {
+  position:absolute; bottom:60px; left:8px;
+  display:flex; flex-direction:column; gap:6px; z-index:900;
+}
+.fly-btn {
+  background:var(--panel); border:1px solid var(--green-light);
+  color:var(--dim); font-size:9px; letter-spacing:.07em; text-transform:uppercase;
+  padding:6px 10px; border-radius:4px; cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.5); white-space:nowrap;
+}
+.fly-btn:active { background:var(--green); }
+
+/* POINT NOTE MODAL */
+#note-modal {
+  position:fixed; inset:0; background:rgba(0,0,0,.7);
+  display:none; align-items:center; justify-content:center; z-index:2000;
+}
+#note-modal.show { display:flex; }
+#note-box {
+  background:var(--panel); border:1px solid var(--gold);
+  border-radius:8px; padding:20px; width:88%; max-width:360px;
+}
+#note-box h3 { color:var(--gold-light); font-size:12px; letter-spacing:.1em; text-transform:uppercase; margin-bottom:10px; }
+.note-input-row { position:relative; }
+#note-input {
+  width:100%; background:var(--dark); border:1px solid var(--green-light);
+  color:var(--text); font-family:'Courier New',monospace; font-size:14px;
+  padding:10px 44px 10px 10px; border-radius:4px; resize:none; height:80px;
+}
+#note-input:focus { outline:none; border-color:var(--gold); }
+#mic-btn {
+  position:absolute; right:6px; top:6px;
+  width:32px; height:32px; border-radius:50%;
+  background:var(--dark); border:1px solid var(--green-light);
+  color:var(--dim); font-size:16px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+#mic-btn.listening { border-color:var(--red); color:var(--red); animation:micpulse 1s ease-in-out infinite; }
+@keyframes micpulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* Photo strip */
+#photo-strip { display:flex; gap:6px; margin-top:8px; align-items:center; flex-wrap:wrap; }
+#photo-btn {
+  width:48px; height:48px; border-radius:6px; flex-shrink:0;
+  background:var(--dark); border:1px solid var(--green-light);
+  color:var(--dim); font-size:22px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+}
+.photo-thumb {
+  width:48px; height:48px; border-radius:6px; object-fit:cover;
+  border:1px solid var(--green-light); cursor:pointer; flex-shrink:0;
+}
+.photo-thumb-wrap { position:relative; }
+.photo-del {
+  position:absolute; top:-5px; right:-5px;
+  width:16px; height:16px; border-radius:50%;
+  background:var(--red); border:none; color:#fff;
+  font-size:10px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+  line-height:1;
+}
+
+.note-btns { display:flex; gap:8px; margin-top:12px; }
+.note-btn {
+  flex:1; padding:10px; border-radius:4px; font-family:'Courier New',monospace;
+  font-size:11px; letter-spacing:.08em; text-transform:uppercase; cursor:pointer; border:1px solid;
+}
+#note-save { background:var(--green); border-color:var(--green-light); color:var(--gold-light); }
+#note-cancel { background:var(--dark); border-color:var(--dim); color:var(--dim); }
+
+/* EXPORT PANEL */
+#export-panel {
+  position:fixed; bottom:0; left:0; right:0;
+  background:var(--panel); border-top:1px solid var(--green-light);
+  padding:16px; transform:translateY(100%); transition:transform .3s;
+  z-index:1500;
+}
+#export-panel.open { transform:translateY(0); }
+#export-panel h3 { color:var(--gold-light); font-size:11px; letter-spacing:.1em; text-transform:uppercase; margin-bottom:12px; }
+.exp-row { display:flex; gap:8px; margin-bottom:8px; }
+.exp-btn {
+  flex:1; padding:11px; border-radius:4px; font-family:'Courier New',monospace;
+  font-size:10px; letter-spacing:.08em; text-transform:uppercase; cursor:pointer;
+  background:var(--green); border:1px solid var(--green-light); color:var(--gold-light);
+}
+.exp-btn:disabled { opacity:.4; cursor:default; }
+#exp-close {
+  width:100%; padding:10px; border-radius:4px; font-family:'Courier New',monospace;
+  font-size:10px; letter-spacing:.08em; text-transform:uppercase; cursor:pointer;
+  background:var(--dark); border:1px solid var(--dim); color:var(--dim); margin-top:4px;
+}
+.exp-stats { font-size:10px; color:var(--dim); margin-bottom:10px; }
+
+/* TOAST */
+#toast {
+  position:fixed; top:56px; left:50%; transform:translateX(-50%);
+  background:var(--panel); border:1px solid var(--gold); color:var(--gold-light);
+  padding:7px 14px; font-size:10px; letter-spacing:.08em; border-radius:4px;
+  z-index:3000; opacity:0; transition:opacity .25s; pointer-events:none; white-space:nowrap;
+}
+#toast.show { opacity:1; }
+
+/* Leaflet dot override */
+.gps-dot-icon { background:none; border:none; }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div style="flex:1;min-width:0;">
+    <div id="header-title">Field Map Viewer</div>
+    <span id="map-label">No PDF loaded</span>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<button id="load-pdf-btn" onclick="document.getElementById('pdf-input').click()">+ PDF Map</button>
+
+<div id="toolbar">
+  <button class="tb-btn" id="btn-track" onclick="toggleTrack()" title="Track log">⏺</button>
+  <button class="tb-btn" id="btn-point" onclick="togglePointMode()" title="Capture point">📍</button>
+  <button class="tb-btn" id="btn-pdf" onclick="togglePDF()" title="Toggle PDF overlay" style="display:none">🗺</button>
+  <button class="tb-btn" id="btn-export" onclick="toggleExport()" title="Export">⬆</button>
+</div>
+
+<div id="fly-btns">
+  <button class="fly-btn" onclick="flyToGPS()">➤ My Location</button>
+  <button class="fly-btn" id="fly-map-btn" onclick="flyToMap()" style="display:none">➤ PDF Map</button>
+</div>
+
+<div id="footer">
+  <div class="stat"><span class="stat-label">GPS</span><span class="stat-val err" id="s-gps">OFF</span></div>
+  <div class="vdiv"></div>
+  <div class="stat"><span class="stat-label">Acc</span><span class="stat-val" id="s-acc">—</span></div>
+  <div class="vdiv"></div>
+  <div class="stat"><span class="stat-label">Lat</span><span class="stat-val" id="s-lat">—</span></div>
+  <div class="vdiv"></div>
+  <div class="stat"><span class="stat-label">Lon</span><span class="stat-val" id="s-lon">—</span></div>
+  <div class="vdiv"></div>
+  <div class="stat"><span class="stat-label">Track pts</span><span class="stat-val" id="s-track">0</span></div>
+  <div class="vdiv"></div>
+  <div class="stat"><span class="stat-label">Points</span><span class="stat-val" id="s-pts">0</span></div>
+</div>
+
+<!-- Note modal -->
+<div id="note-modal">
+  <div id="note-box">
+    <h3>Capture Point</h3>
+    <div class="note-input-row">
+      <textarea id="note-input" placeholder="Type or tap 🎤 to dictate…"></textarea>
+      <button id="mic-btn" onclick="toggleMic()" title="Voice dictate">🎤</button>
+    </div>
+    <div id="photo-strip">
+      <button id="photo-btn" onclick="document.getElementById('photo-input').click()" title="Add photo">📷</button>
+    </div>
+    <div class="note-btns">
+      <button class="note-btn" id="note-cancel" onclick="cancelPoint()">Cancel</button>
+      <button class="note-btn" id="note-save" onclick="savePoint()">Save Point</button>
+    </div>
+  </div>
+</div>
+<input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none" multiple>
+
+<!-- Export panel -->
+<div id="export-panel">
+  <h3>Export Data</h3>
+  <div class="exp-stats" id="exp-stats"></div>
+  <div class="exp-row">
+    <button class="exp-btn" id="exp-track-btn" onclick="exportTrack()">Export Track (GeoJSON)</button>
+  </div>
+  <div class="exp-row">
+    <button class="exp-btn" id="exp-pts-btn" onclick="exportPoints()">Export Points (GeoJSON)</button>
+  </div>
+  <div class="exp-row">
+    <button class="exp-btn" onclick="clearTrack()">Clear Track</button>
+    <button class="exp-btn" style="background:var(--dark);border-color:var(--red);color:var(--red);" onclick="clearPoints()">Clear Points</button>
+  </div>
+  <button id="exp-close" onclick="toggleExport()">Close</button>
+</div>
+
+<div id="toast"></div>
+<input type="file" id="pdf-input" accept=".pdf,application/pdf" style="display:none">
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ── MAP INIT ──────────────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [44.13, -79.49],
+  zoom: 15,
+  zoomControl: false,
+  attributionControl: false
+});
+
+// Aerial basemap (ESRI World Imagery)
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  maxZoom: 22, maxNativeZoom: 19
+}).addTo(map);
+
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+// ── STATE ─────────────────────────────────────────────────────────────────────
+let gpsLat = null, gpsLon = null, gpsAcc = null;
+let gpsMarker = null, gpsAccCircle = null;
+let trackActive = false, trackLog = [], trackLine = null;
+let pointMode = false, pendingLat = null, pendingLon = null;
+let capturedPoints = [], pointMarkers = [];
+let pdfOverlay = null, pdfVisible = true, pdfBounds = null;
+
+// ── GPS ───────────────────────────────────────────────────────────────────────
+function startGPS() {
+  if (!navigator.geolocation) { setGPSStatus('N/A','err'); return; }
+  setGPSStatus('WAIT','warn');
+  navigator.geolocation.watchPosition(onGPS, onGPSErr,
+    { enableHighAccuracy:true, maximumAge:2000, timeout:15000 });
+}
+
+function onGPS(pos) {
+  gpsLat = pos.coords.latitude;
+  gpsLon = pos.coords.longitude;
+  gpsAcc = pos.coords.accuracy;
+
+  setGPSStatus('ON','on');
+  document.getElementById('s-acc').textContent = '±'+Math.round(gpsAcc)+'m';
+  document.getElementById('s-acc').className = 'stat-val '+(gpsAcc<10?'on':gpsAcc<30?'warn':'err');
+  document.getElementById('s-lat').textContent = gpsLat.toFixed(5);
+  document.getElementById('s-lon').textContent = gpsLon.toFixed(5);
+
+  // GPS marker
+  const latlng = [gpsLat, gpsLon];
+  if (!gpsMarker) {
+    const icon = L.divIcon({
+      className:'',
+      html:`<div style="width:18px;height:18px;position:relative;">
+        <div style="position:absolute;inset:0;border-radius:50%;background:rgba(76,175,80,.25);animation:gpsring 2s ease-out infinite;"></div>
+        <div style="position:absolute;inset:4px;border-radius:50%;background:#4caf50;border:2px solid #fff;box-shadow:0 0 6px rgba(76,175,80,.8);"></div>
+      </div>`,
+      iconSize:[18,18], iconAnchor:[9,9]
+    });
+    gpsMarker = L.marker(latlng, {icon, zIndexOffset:1000}).addTo(map);
+    gpsAccCircle = L.circle(latlng, {radius:gpsAcc, color:'#4caf50', fillColor:'#4caf50', fillOpacity:.07, weight:1}).addTo(map);
+    flyToGPS();
+  } else {
+    gpsMarker.setLatLng(latlng);
+    gpsAccCircle.setLatLng(latlng);
+    gpsAccCircle.setRadius(gpsAcc);
+  }
+
+  // Track
+  if (trackActive) {
+    trackLog.push([gpsLat, gpsLon]);
+    document.getElementById('s-track').textContent = trackLog.length;
+    if (!trackLine) {
+      trackLine = L.polyline(trackLog, {color:'#ff9800', weight:3, opacity:.85}).addTo(map);
+    } else {
+      trackLine.setLatLngs(trackLog);
+    }
+  }
+}
+
+function onGPSErr(e) { setGPSStatus('ERR','err'); }
+function setGPSStatus(t,c) {
+  const el = document.getElementById('s-gps');
+  el.textContent = t; el.className = 'stat-val '+c;
+}
+
+function flyToGPS() {
+  if (gpsLat !== null) map.flyTo([gpsLat, gpsLon], Math.max(map.getZoom(), 17), {duration:1});
+  else showToast('GPS not yet available');
+}
+
+// ── TRACK ─────────────────────────────────────────────────────────────────────
+function toggleTrack() {
+  trackActive = !trackActive;
+  const btn = document.getElementById('btn-track');
+  if (trackActive) {
+    btn.classList.add('active-red');
+    btn.textContent = '⏹';
+    showToast('Track recording started');
+  } else {
+    btn.classList.remove('active-red');
+    btn.textContent = '⏺';
+    showToast(`Track paused — ${trackLog.length} pts`);
+  }
+}
+
+function clearTrack() {
+  trackLog = [];
+  if (trackLine) { map.removeLayer(trackLine); trackLine = null; }
+  document.getElementById('s-track').textContent = '0';
+  showToast('Track cleared');
+}
+
+// ── POINT CAPTURE ─────────────────────────────────────────────────────────────
+let pendingPhotos = []; // [{dataUrl, name}]
+let recognition = null;
+
+function togglePointMode() {
+  pointMode = !pointMode;
+  const btn = document.getElementById('btn-point');
+  if (pointMode) {
+    btn.classList.add('active-gold');
+    map.getContainer().style.cursor = 'crosshair';
+    showToast('Tap map to capture point');
+  } else {
+    btn.classList.remove('active-gold');
+    map.getContainer().style.cursor = '';
+    showToast('Point mode off');
+  }
+}
+
+map.on('click', function(e) {
+  if (!pointMode) return;
+  pendingLat = e.latlng.lat;
+  pendingLon = e.latlng.lng;
+  pendingPhotos = [];
+  document.getElementById('note-input').value = '';
+  renderPhotoStrip();
+  document.getElementById('note-modal').classList.add('show');
+  setTimeout(() => document.getElementById('note-input').focus(), 100);
+});
+
+// ── VOICE DICTATE ─────────────────────────────────────────────────────────────
+function toggleMic() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) { showToast('Speech not supported in this browser'); return; }
+
+  if (recognition) {
+    recognition.stop();
+    recognition = null;
+    document.getElementById('mic-btn').classList.remove('listening');
+    return;
+  }
+
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-CA';
+
+  const existing = document.getElementById('note-input').value;
+  let interim = '';
+
+  recognition.onresult = (e) => {
+    interim = '';
+    let final = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      if (e.results[i].isFinal) final += e.results[i][0].transcript;
+      else interim += e.results[i][0].transcript;
+    }
+    document.getElementById('note-input').value = existing + (existing ? ' ' : '') + final + interim;
+  };
+
+  recognition.onerror = () => {
+    recognition = null;
+    document.getElementById('mic-btn').classList.remove('listening');
+    showToast('Mic error — check permissions');
+  };
+
+  recognition.onend = () => {
+    recognition = null;
+    document.getElementById('mic-btn').classList.remove('listening');
+  };
+
+  recognition.start();
+  document.getElementById('mic-btn').classList.add('listening');
+  showToast('Listening…');
+}
+
+// ── PHOTO CAPTURE ─────────────────────────────────────────────────────────────
+document.getElementById('photo-input').addEventListener('change', async function(e) {
+  const files = Array.from(e.target.files);
+  e.target.value = '';
+  for (const file of files) {
+    const dataUrl = await resizePhoto(file, 1200);
+    pendingPhotos.push({ dataUrl, name: file.name });
+  }
+  renderPhotoStrip();
+  showToast(`${pendingPhotos.length} photo(s) attached`);
+});
+
+function resizePhoto(file, maxPx) {
+  return new Promise(res => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = img.width * scale; c.height = img.height * scale;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.src = url;
+  });
+}
+
+function renderPhotoStrip() {
+  const strip = document.getElementById('photo-strip');
+  strip.innerHTML = '';
+  // Add photo button
+  const addBtn = document.createElement('button');
+  addBtn.id = 'photo-btn'; addBtn.title = 'Add photo';
+  addBtn.textContent = '📷';
+  addBtn.onclick = () => document.getElementById('photo-input').click();
+  strip.appendChild(addBtn);
+  // Thumbnails
+  pendingPhotos.forEach((ph, i) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'photo-thumb-wrap';
+    const img = document.createElement('img');
+    img.className = 'photo-thumb'; img.src = ph.dataUrl; img.title = ph.name;
+    const del = document.createElement('button');
+    del.className = 'photo-del'; del.textContent = '✕';
+    del.onclick = () => { pendingPhotos.splice(i,1); renderPhotoStrip(); };
+    wrap.appendChild(img); wrap.appendChild(del);
+    strip.appendChild(wrap);
+  });
+}
+
+function savePoint() {
+  // Stop mic if running
+  if (recognition) { recognition.stop(); recognition = null; }
+  document.getElementById('mic-btn').classList.remove('listening');
+
+  const note = document.getElementById('note-input').value.trim();
+  const pt = {
+    lat: pendingLat, lon: pendingLon, note,
+    time: new Date().toISOString(),
+    photos: pendingPhotos.map(p => p.dataUrl)
+  };
+  capturedPoints.push(pt);
+
+  const hasPhoto = pt.photos.length > 0;
+  const icon = L.divIcon({
+    className:'',
+    html:`<div style="width:${hasPhoto?18:14}px;height:${hasPhoto?18:14}px;border-radius:50%;
+      background:${hasPhoto?'#4fc3f7':'#e8b84b'};border:2px solid #fff;
+      box-shadow:0 0 4px rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;
+      font-size:9px;">${hasPhoto?'📷':''}</div>`,
+    iconSize:[hasPhoto?18:14,hasPhoto?18:14], iconAnchor:[hasPhoto?9:7,hasPhoto?9:7]
+  });
+  const m = L.marker([pendingLat, pendingLon], {icon}).addTo(map);
+
+  let popupHtml = `<div style="font-family:monospace;font-size:12px;max-width:200px;">`;
+  if (note) popupHtml += `<p>${note}</p>`;
+  if (pt.photos.length) popupHtml += pt.photos.map(d =>
+    `<img src="${d}" style="width:100%;border-radius:4px;margin-top:4px;">`).join('');
+  popupHtml += `</div>`;
+  m.bindPopup(popupHtml);
+  pointMarkers.push(m);
+
+  document.getElementById('s-pts').textContent = capturedPoints.length;
+  document.getElementById('note-modal').classList.remove('show');
+  showToast(`Point ${capturedPoints.length} saved${hasPhoto?' 📷':''}`);
+}
+
+function cancelPoint() {
+  if (recognition) { recognition.stop(); recognition = null; }
+  document.getElementById('mic-btn').classList.remove('listening');
+  document.getElementById('note-modal').classList.remove('show');
+}
+
+function clearPoints() {
+  capturedPoints = [];
+  pointMarkers.forEach(m => map.removeLayer(m));
+  pointMarkers = [];
+  document.getElementById('s-pts').textContent = '0';
+  showToast('Points cleared');
+}
+
+// ── PDF OVERLAY ───────────────────────────────────────────────────────────────
+document.getElementById('pdf-input').addEventListener('change', async function(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = '';
+  showToast('Reading PDF…');
+
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  const geo = parseGeo(bytes);
+  if (!geo) { showToast('No georeference found in PDF', 3000); return; }
+
+  showToast('Rendering…');
+  const imgUrl = await renderPDF(buf);
+
+  // corners: BL,TL,TR,BR → Leaflet needs SW,NE
+  const lats = geo.corners.map(c=>c.lat);
+  const lons = geo.corners.map(c=>c.lon);
+  const sw = [Math.min(...lats), Math.min(...lons)];
+  const ne = [Math.max(...lats), Math.max(...lons)];
+  pdfBounds = L.latLngBounds(sw, ne);
+
+  if (pdfOverlay) map.removeLayer(pdfOverlay);
+  pdfOverlay = L.imageOverlay(imgUrl, pdfBounds, { opacity:0.85, interactive:false }).addTo(map);
+  pdfVisible = true;
+
+  document.getElementById('btn-pdf').style.display = 'flex';
+  document.getElementById('btn-pdf').classList.add('active-gold');
+  document.getElementById('fly-map-btn').style.display = 'block';
+  document.getElementById('load-pdf-btn').classList.add('has-map');
+  document.getElementById('map-label').textContent = file.name.replace(/\.pdf$/i,'');
+
+  map.fitBounds(pdfBounds, { padding:[30,30] });
+  showToast('PDF loaded');
+});
+
+function togglePDF() {
+  if (!pdfOverlay) return;
+  pdfVisible = !pdfVisible;
+  const btn = document.getElementById('btn-pdf');
+  if (pdfVisible) {
+    pdfOverlay.setOpacity(0.85);
+    btn.classList.add('active-gold');
+    showToast('PDF overlay on');
+  } else {
+    pdfOverlay.setOpacity(0);
+    btn.classList.remove('active-gold');
+    showToast('PDF overlay off');
+  }
+}
+
+function flyToMap() {
+  if (pdfBounds) map.flyToBounds(pdfBounds, { padding:[30,30], duration:1 });
+}
+
+// ── PDF PARSING ───────────────────────────────────────────────────────────────
+function parseGeo(bytes) {
+  const text = new TextDecoder('latin1').decode(bytes);
+  const gptsM = text.match(/\/GPTS\s*\[([^\]]+)\]/);
+  if (!gptsM) return null;
+  const gpts = gptsM[1].trim().split(/\s+/).map(Number);
+  const lptsM = text.match(/\/LPTS\s*\[([^\]]+)\]/);
+  const lpts = lptsM ? lptsM[1].trim().split(/\s+/).map(Number) : [0,0,0,1,1,1,1,0];
+  const corners = [];
+  for (let i=0;i<4;i++) corners.push({lat:gpts[i*2],lon:gpts[i*2+1],px:lpts[i*2],py:lpts[i*2+1]});
+  return { corners };
+}
+
+async function renderPDF(arrayBuffer) {
+  await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({data:arrayBuffer}).promise;
+  const page = await pdf.getPage(1);
+  const scale = (window.devicePixelRatio||2) * 1.5;
+  const vp = page.getViewport({scale});
+  const canvas = document.createElement('canvas');
+  canvas.width = vp.width; canvas.height = vp.height;
+  await page.render({canvasContext:canvas.getContext('2d'), viewport:vp}).promise;
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
+async function loadPdfJs() {
+  if (window.pdfjsLib) return;
+  await new Promise((res,rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+// ── EXPORT ────────────────────────────────────────────────────────────────────
+function toggleExport() {
+  const panel = document.getElementById('export-panel');
+  panel.classList.toggle('open');
+  if (panel.classList.contains('open')) {
+    document.getElementById('exp-stats').textContent =
+      `Track: ${trackLog.length} pts   |   Captured points: ${capturedPoints.length}`;
+    document.getElementById('exp-track-btn').disabled = trackLog.length === 0;
+    document.getElementById('exp-pts-btn').disabled = capturedPoints.length === 0;
+  }
+}
+
+function exportTrack() {
+  if (!trackLog.length) return;
+  const geojson = {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      geometry: { type: 'LineString', coordinates: trackLog.map(p=>[p[1],p[0]]) },
+      properties: { recorded: new Date().toISOString(), points: trackLog.length }
+    }]
+  };
+  downloadJSON(geojson, `track_${timestamp()}.geojson`);
+  showToast('Track exported');
+}
+
+function exportPoints() {
+  if (!capturedPoints.length) return;
+  const geojson = {
+    type: 'FeatureCollection',
+    features: capturedPoints.map((p,i) => ({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [p.lon, p.lat] },
+      properties: {
+        id: i+1, note: p.note, time: p.time,
+        photo_count: p.photos ? p.photos.length : 0,
+        photos: p.photos || []
+      }
+    }))
+  };
+  downloadJSON(geojson, `points_${timestamp()}.geojson`);
+  showToast('Points exported');
+}
+
+function downloadJSON(obj, filename) {
+  const blob = new Blob([JSON.stringify(obj, null, 2)], {type:'application/geo+json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+}
+
+function timestamp() {
+  return new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+}
+
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+let toastTimer;
+function showToast(msg, dur=2000) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove('show'), dur);
+}
+
+// ── CSS ANIM ──────────────────────────────────────────────────────────────────
+const style = document.createElement('style');
+style.textContent = `@keyframes gpsring{0%{transform:scale(1);opacity:.6}100%{transform:scale(3.5);opacity:0}}`;
+document.head.appendChild(style);
+
+// ── START ─────────────────────────────────────────────────────────────────────
+startGPS();
+</script>
+</body>
+</html>
